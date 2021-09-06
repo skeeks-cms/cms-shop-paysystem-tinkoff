@@ -1,0 +1,37 @@
+{
+	"name": "skeeks/cms-shop-paysystem-tinkoff",
+	"description": "Способ оплаты tinkoff для SkeekS CMS",
+	"keywords": ["yii", "skeeks", "framework", "component"],
+    "homepage": "https://cms.skeeks.com/",
+	"type": "yii2-extension",
+	"license": "BSD-3-Clause",
+	"support": {
+        "issues": "https://skeeks.com/"
+    },
+	"authors": [
+		{
+			"name": "Semenov Alexander",
+			"email": "semenov@skeeks.com"
+		}
+	],
+	"require": {
+	  	"skeeks/cms-shop": "^2.3 || dev-master"
+	},
+    "autoload": {
+        "psr-4": {
+            "skeeks\\cms\\shop\\tinkoff\\": "src/"
+        }
+    },
+	"extra": {
+        "config-plugin": {
+            "web": [
+                "src/config/common.php",
+                "src/config/web.php"
+            ],
+            "console": [
+                "src/config/common.php",
+                "src/config/console.php"
+            ]
+        }
+    }
+}
