@@ -12,12 +12,11 @@ use skeeks\cms\helpers\StringHelper;
 use skeeks\cms\shop\models\ShopOrder;
 use skeeks\cms\shop\models\ShopPayment;
 use skeeks\cms\shop\paysystem\PaysystemHandler;
-use skeeks\yii2\form\fields\BoolField;
 use skeeks\yii2\form\fields\FieldSet;
-use skeeks\yii2\form\fields\NumberField;
 use yii\base\Exception;
 use yii\helpers\ArrayHelper;
-use YooKassa\Client;
+use yii\helpers\Url;
+use yii\httpclient\Client;
 
 /**
  * @author Semenov Alexander <semenov@skeeks.com>
@@ -25,14 +24,9 @@ use YooKassa\Client;
 class TinkoffPaysystemHandler extends PaysystemHandler
 {
     /**
-     * @var integer
+     * @var
      */
-    public $shop_id = '';
-
-    /**
-     * @var string
-     */
-    public $secret_key = '';
+    public $terminal_key;
 
     /**
      * @var bool Отправлять данные по чекам?
@@ -40,12 +34,17 @@ class TinkoffPaysystemHandler extends PaysystemHandler
     public $is_receipt = false;
 
     /**
+     * @var string
+     */
+    public $tinkoff_url = "https://securepay.tinkoff.ru/v2/";
+
+    /**
      * @return array
      */
     static public function descriptorConfig()
     {
         return array_merge(parent::descriptorConfig(), [
-            'name' => "Yookassa",
+            'name' => "Tinkoff",
         ]);
     }
 
@@ -53,10 +52,8 @@ class TinkoffPaysystemHandler extends PaysystemHandler
     public function rules()
     {
         return ArrayHelper::merge(parent::rules(), [
-            [['shop_id'], 'required'],
-            [['shop_id'], 'integer'],
-            [['secret_key'], 'required'],
-            [['secret_key'], 'string'],
+            [['terminal_key'], 'required'],
+            [['terminal_key'], 'string'],
             [['is_receipt'], 'boolean'],
         ]);
     }
@@ -64,18 +61,16 @@ class TinkoffPaysystemHandler extends PaysystemHandler
     public function attributeLabels()
     {
         return ArrayHelper::merge(parent::attributeLabels(), [
-            'shop_id'    => "ID магазина",
-            'secret_key' => "Секретный ключ",
-            'is_receipt' => "Отправлять данные для формирования чеков?",
+            'terminal_key' => "ID терминала",
+            'is_receipt'   => "Отправлять данные для формирования чеков?",
         ]);
     }
 
     public function attributeHints()
     {
         return ArrayHelper::merge(parent::attributeHints(), [
-            'shop_id'    => "shop_id",
-            'secret_key' => "secret_key",
-            'is_receipt' => "Необходимо передавать, если вы отправляете данные для формирования чеков по одному из сценариев: Платеж и чек одновременно или Сначала чек, потом платеж.",
+            'terminal_key' => "Указан в личном кабинете tinkiff",
+            'is_receipt'   => "Необходимо передавать, если вы отправляете данные для формирования чеков по одному из сценариев: Платеж и чек одновременно или Сначала чек, потом платеж.",
         ]);
     }
 
@@ -90,14 +85,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
                 'class'  => FieldSet::class,
                 'name'   => 'Основные',
                 'fields' => [
-                    'shop_id'    => [
-                        'class' => NumberField::class,
-                    ],
-                    'secret_key',
-                    'is_receipt' => [
-                        'class'     => BoolField::class,
-                        'allowNull' => false,
-                    ],
+                    'terminal_key',
                 ],
             ],
 
@@ -115,12 +103,17 @@ class TinkoffPaysystemHandler extends PaysystemHandler
         $yooKassa = $model->shopPaySystem->handler;
         $money = $model->money->convertToCurrency("RUB");
         $returnUrl = $shopOrder->getUrl([], true);
+        $successUrl = $shopOrder->getUrl(['success_paied' => true], true);
+        $failUrl = $shopOrder->getUrl(['fail_paied' => true], true);
 
         /**
          * Для чеков нужно указывать информацию о товарах
          * https://yookassa.ru/developers/api?lang=php#create_payment
          */
         $shopBuyer = $shopOrder->shopBuyer;
+        $receipt = [];
+
+
         $receipt = [];
         if ($yooKassa->is_receipt) {
             if (trim($shopBuyer->email)) {
@@ -197,45 +190,51 @@ class TinkoffPaysystemHandler extends PaysystemHandler
             }
         }
 
+        $data = [
+            'TerminalKey'     => $this->terminal_key,
+            'Amount'          => $money->amount * 100,
+            'OrderId'         => $model->id,
+            'Description'     => $model->description,
+            'NotificationURL' => Url::to(['/tinkoff/tinkoff/notify'], true),
+            'SuccessURL'      => $successUrl,
+            'FailURL'         => $failUrl,
+        ];
 
-        $client = new Client();
-        $client->setAuth($yooKassa->shop_id, $yooKassa->secret_key);
-        $payment = $client->createPayment([
-            'receipt'      => $receipt,
-            'amount'       => [
-                'value'    => $money->amount,
-                'currency' => 'RUB',
-            ],
-            'confirmation' => [
-                'type'       => 'redirect',
-                'return_url' => $returnUrl,
-            ],
-            'description'  => 'Заказ №' . $shopOrder->id,
-        ],
-            uniqid('', true)
-        );
-
-        \Yii::info(print_r($payment, true), self::class);
-
-        if (!$payment->id) {
-            throw new Exception('Yandex kassa payment id not found');
+        $email = null;
+        $phone = null;
+        if ($model->shopBuyer) {
+            if ($model->shopBuyer->email) {
+                $data["DATA"]["Email"] = $model->shopBuyer->email;
+            }
         }
 
-        $model->external_id = $payment->id;
-        $model->external_data = [
-            'id'           => $payment->id,
-            'status'       => $payment->status,
-            'created_at'   => $payment->created_at,
-            'confirmation' => [
-                'type'  => $payment->confirmation->type,
-                'url'   => $payment->confirmation->getConfirmationUrl(),
-            ],
-        ];
+        $client = new Client();
+        $request = $client
+            ->post($this->tinkoff_url."Init")
+            ->setFormat(Client::FORMAT_JSON)
+            ->setData($data);
+        ;
+
+        \Yii::info(print_r($data, true), self::class);
+
+        $response = $request->send();
+        if (!$response->isOk) {
+            \Yii::error($response->content, self::class);
+            throw new Exception('Tinkoff api not found');
+        }
+
+        if (!ArrayHelper::getValue($response->data, "PaymentId")) {
+            \Yii::error(print_r($response->data, true), self::class);
+            throw new Exception('Tinkoff kassa payment id not found: ' . print_r($response->data, true));
+        }
+
+        $model->external_id = ArrayHelper::getValue($response->data, "PaymentId");
+        $model->external_data = $response->data;
 
         if (!$model->save()) {
             throw new Exception("Не удалось сохранить платеж: ".print_r($model->errors, true));
         }
 
-        return \Yii::$app->response->redirect($payment->confirmation->getConfirmationUrl());
+        return \Yii::$app->response->redirect(ArrayHelper::getValue($response->data, "PaymentURL"));
     }
 }
