@@ -12,6 +12,7 @@ use skeeks\cms\helpers\StringHelper;
 use skeeks\cms\shop\models\ShopOrder;
 use skeeks\cms\shop\models\ShopPayment;
 use skeeks\cms\shop\paysystem\PaysystemHandler;
+use skeeks\yii2\form\fields\BoolField;
 use skeeks\yii2\form\fields\FieldSet;
 use yii\base\Exception;
 use yii\helpers\ArrayHelper;
@@ -86,6 +87,11 @@ class TinkoffPaysystemHandler extends PaysystemHandler
                 'name'   => 'Основные',
                 'fields' => [
                     'terminal_key',
+
+                    'is_receipt' => [
+                        'class'     => BoolField::class,
+                        'allowNull' => false,
+                    ],
                 ],
             ],
 
@@ -111,30 +117,41 @@ class TinkoffPaysystemHandler extends PaysystemHandler
          * https://yookassa.ru/developers/api?lang=php#create_payment
          */
         $shopBuyer = $shopOrder->shopBuyer;
-        $receipt = [];
+
+
+        $data = [
+            'TerminalKey'     => $this->terminal_key,
+            'Amount'          => $money->amount * 100,
+            'OrderId'         => $model->id,
+            'Description'     => $model->description,
+            'NotificationURL' => Url::to(['/tinkoff/tinkoff/notify'], true),
+            'SuccessURL'      => $successUrl,
+            'FailURL'         => $failUrl,
+        ];
 
 
         $receipt = [];
         if ($yooKassa->is_receipt) {
             if (trim($shopBuyer->email)) {
-                $receipt['customer'] = [
-                    'email'     => trim($shopBuyer->email),
-                    'full_name' => trim($shopBuyer->name),
-                ];
+                $receipt['Email'] = trim($shopBuyer->email);
             }
+
+            $receipt['Email'] = \Yii::$app->cms->adminEmail;
+            $receipt['Taxation'] = "usn_income"; //todo: вынести в настройки
 
             foreach ($shopOrder->shopOrderItems as $shopOrderItem) {
                 $itemData = [];
 
-                $itemData['description'] = StringHelper::substr($shopOrderItem->name, 0, 128);
-                $itemData['quantity'] = (float)$shopOrderItem->quantity;
-                $itemData['vat_code'] = 1; //todo: доработать этот момент
-                $itemData['amount'] = [
-                    'value'    => $shopOrderItem->money->amount,
-                    'currency' => 'RUB',
-                ];
+                /**
+                 * @see https://www.tinkoff.ru/kassa/develop/api/payments/init-request/#Items
+                 */
+                $itemData['Name'] = StringHelper::substr($shopOrderItem->name, 0, 128);
+                $itemData['Quantity'] = (float)$shopOrderItem->quantity;
+                $itemData['Tax'] = "none"; //todo: доработать этот момент
+                $itemData['Price'] = $shopOrderItem->money->amount * 100;
+                $itemData['Amount'] = $shopOrderItem->money->amount * $shopOrderItem->quantity * 100;
 
-                $receipt['items'][] = $itemData;
+                $receipt['Items'][] = $itemData;
             }
 
             /**
@@ -142,20 +159,18 @@ class TinkoffPaysystemHandler extends PaysystemHandler
              */
             if ((float)$shopOrder->moneyDelivery->amount > 0) {
                 $itemData = [];
-                $itemData['description'] = StringHelper::substr($shopOrder->shopDelivery->name, 0, 128);
-                $itemData['quantity'] = 1;
-                $itemData['vat_code'] = 1; //todo: доработать этот момент
-                $itemData['amount'] = [
-                    'value'    => $shopOrder->moneyDelivery->amount,
-                    'currency' => 'RUB',
-                ];
+                $itemData['Name'] = StringHelper::substr($shopOrder->shopDelivery->name, 0, 128);
+                $itemData['Quantity'] = 1;
+                $itemData['Tax'] = "none";
+                $itemData['Amount'] = $shopOrder->moneyDelivery->amount * 100;
+                $itemData['Price'] = $shopOrder->moneyDelivery->amount * 100;
 
-                $receipt['items'][] = $itemData;
+                $receipt['Items'][] = $itemData;
             }
 
             $totalCalcAmount = 0;
-            foreach ($receipt['items'] as $itemData) {
-                $totalCalcAmount = $totalCalcAmount + ($itemData['amount']['value'] * $itemData['quantity']);
+            foreach ($receipt['Items'] as $itemData) {
+                $totalCalcAmount = $totalCalcAmount + ($itemData['Amount'] * $itemData['Quantity']);
             }
 
             $discount = 0;
@@ -167,7 +182,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
              * Стоимость скидки
              */
             //todo: тут можно еще подумать, это временное решение
-            if ($discount > 0) {
+            if ($discount > 0 && 1 == 2) {
                 $discountValue = $discount;
                 foreach ($receipt['items'] as $key => $item) {
                     if ($discountValue == 0) {
@@ -185,20 +200,16 @@ class TinkoffPaysystemHandler extends PaysystemHandler
 
                     $receipt['items'][$key] = $item;
                 }
-
                 //$receipt['items'][] = $itemData;
+
+
             }
+
+
+            $data["Receipt"] = $receipt;
         }
 
-        $data = [
-            'TerminalKey'     => $this->terminal_key,
-            'Amount'          => $money->amount * 100,
-            'OrderId'         => $model->id,
-            'Description'     => $model->description,
-            'NotificationURL' => Url::to(['/tinkoff/tinkoff/notify'], true),
-            'SuccessURL'      => $successUrl,
-            'FailURL'         => $failUrl,
-        ];
+
 
         $email = null;
         $phone = null;
@@ -207,6 +218,8 @@ class TinkoffPaysystemHandler extends PaysystemHandler
                 $data["DATA"]["Email"] = $model->shopBuyer->email;
             }
         }
+
+        //print_r($data);die;
 
         $client = new Client();
         $request = $client
