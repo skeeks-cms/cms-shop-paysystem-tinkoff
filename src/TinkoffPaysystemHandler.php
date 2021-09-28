@@ -132,11 +132,11 @@ class TinkoffPaysystemHandler extends PaysystemHandler
 
         $receipt = [];
         if ($yooKassa->is_receipt) {
+
+            $receipt['Email'] = \Yii::$app->cms->adminEmail;
             if (trim($shopBuyer->email)) {
                 $receipt['Email'] = trim($shopBuyer->email);
             }
-
-            $receipt['Email'] = \Yii::$app->cms->adminEmail;
             $receipt['Taxation'] = "usn_income"; //todo: вынести в настройки
 
             foreach ($shopOrder->shopOrderItems as $shopOrderItem) {
