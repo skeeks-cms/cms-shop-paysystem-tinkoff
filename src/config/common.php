@@ -3,7 +3,9 @@ return [
     'components' => [
         'shop' => [
             'paysystemHandlers' => [
-                \skeeks\cms\shop\tinkoff\TinkoffPaysystemHandler::class
+                'tinkoff' => [
+                    'class' => \skeeks\cms\shop\tinkoff\TinkoffPaysystemHandler::class
+                ]
             ],
         ],
 
