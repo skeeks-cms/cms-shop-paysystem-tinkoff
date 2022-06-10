@@ -129,7 +129,7 @@ class TinkoffController extends Controller
                 try {
 
                     $payment = new ShopPayment();
-                    $payment->shop_buyer_id = $shopBill->shop_buyer_id;
+                    $payment->cms_user_id = $shopBill->cms_user_id;
                     $payment->shop_pay_system_id = $shopBill->shop_pay_system_id;
                     $payment->shop_order_id = $shopBill->shop_order_id;
                     $payment->amount = $shopBill->amount;
