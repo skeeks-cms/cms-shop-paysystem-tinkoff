@@ -116,8 +116,6 @@ class TinkoffPaysystemHandler extends PaysystemHandler
          * Для чеков нужно указывать информацию о товарах
          * https://yookassa.ru/developers/api?lang=php#create_payment
          */
-        $shopBuyer = $shopOrder->shopBuyer;
-
 
         $data = [
             'TerminalKey'     => $this->terminal_key,
@@ -134,8 +132,8 @@ class TinkoffPaysystemHandler extends PaysystemHandler
         if ($yooKassa->is_receipt) {
 
             $receipt['Email'] = \Yii::$app->cms->adminEmail;
-            if (trim($shopBuyer->email)) {
-                $receipt['Email'] = trim($shopBuyer->email);
+            if (trim($shopOrder->contact_email)) {
+                $receipt['Email'] = trim($shopOrder->contact_email);
             }
             $receipt['Taxation'] = "usn_income"; //todo: вынести в настройки
 
@@ -213,10 +211,8 @@ class TinkoffPaysystemHandler extends PaysystemHandler
 
         $email = null;
         $phone = null;
-        if ($model->shopBuyer) {
-            if ($model->shopBuyer->email) {
-                $data["DATA"]["Email"] = $model->shopBuyer->email;
-            }
+        if ($model->shopOrder && $model->shopOrder->contact_email) {
+            $data["DATA"]["Email"] = $model->shopOrder->contact_email;
         }
 
         //print_r($data);die;
