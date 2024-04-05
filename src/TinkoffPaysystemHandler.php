@@ -140,6 +140,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
             foreach ($shopOrder->shopOrderItems as $shopOrderItem) {
                 $itemData = [];
 
+                
                 /**
                  * @see https://www.tinkoff.ru/kassa/develop/api/payments/init-request/#Items
                  */
@@ -168,7 +169,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
 
             $totalCalcAmount = 0;
             foreach ($receipt['Items'] as $itemData) {
-                $totalCalcAmount = $totalCalcAmount + ($itemData['Amount'] * $itemData['Quantity']);
+                $totalCalcAmount = $totalCalcAmount + ($itemData['Amount']);
             }
 
             $discount = 0;
@@ -206,9 +207,9 @@ class TinkoffPaysystemHandler extends PaysystemHandler
             }
 
 
+
             $data["Receipt"] = $receipt;
         }
-
 
 
         $email = null;
