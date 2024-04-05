@@ -173,30 +173,32 @@ class TinkoffPaysystemHandler extends PaysystemHandler
 
             $discount = 0;
             if ($totalCalcAmount > (float)$money->amount) {
-                $discount = abs((float)$money->amount - $totalCalcAmount);
+                $discount = abs((float)$money->amount * 100 - $totalCalcAmount);
             }
 
             /**
              * Стоимость скидки
              */
             //todo: тут можно еще подумать, это временное решение
-            if ($discount > 0 && 1 == 2) {
+            if ($discount > 0) {
                 $discountValue = $discount;
-                foreach ($receipt['items'] as $key => $item) {
+                foreach ($receipt['Items'] as $key => $item) {
                     if ($discountValue == 0) {
                         break;
                     }
-                    if ($item['amount']['value']) {
-                        if ($item['amount']['value'] >= $discountValue) {
-                            $item['amount']['value'] = $item['amount']['value'] - $discountValue;
+                    if ($item['Amount']) {
+                        if ($item['Amount'] >= $discountValue) {
+                            $item['Amount'] = $item['Amount'] - $discountValue;
                             $discountValue = 0;
                         } else {
-                            $item['amount']['value'] = 0;
-                            $discountValue = $discountValue - $item['amount']['value'];
+                            $item['Amount'] = 1;
+                            $discountValue = $discountValue - $item['Amount'] - 1;
                         }
                     }
+                    
+                    $item['Price'] = $item['Amount'];
 
-                    $receipt['items'][$key] = $item;
+                    $receipt['Items'][$key] = $item;
                 }
                 //$receipt['items'][] = $itemData;
 
@@ -215,7 +217,6 @@ class TinkoffPaysystemHandler extends PaysystemHandler
             $data["DATA"]["Email"] = $model->shopOrder->contact_email;
         }
 
-        //print_r($data);die;
 
         $client = new Client();
         $request = $client
