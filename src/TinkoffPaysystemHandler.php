@@ -16,6 +16,7 @@ use skeeks\yii2\form\fields\BoolField;
 use skeeks\yii2\form\fields\FieldSet;
 use yii\base\Exception;
 use yii\helpers\ArrayHelper;
+use yii\helpers\Json;
 use yii\helpers\Url;
 use yii\httpclient\Client;
 
@@ -28,6 +29,11 @@ class TinkoffPaysystemHandler extends PaysystemHandler
      * @var
      */
     public $terminal_key;
+
+    /**
+     * @var
+     */
+    public $terminal_password;
 
     /**
      * @var bool Отправлять данные по чекам?
@@ -55,6 +61,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
         return ArrayHelper::merge(parent::rules(), [
             [['terminal_key'], 'required'],
             [['terminal_key'], 'string'],
+            [['terminal_password'], 'string'],
             [['is_receipt'], 'boolean'],
         ]);
     }
@@ -63,6 +70,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
     {
         return ArrayHelper::merge(parent::attributeLabels(), [
             'terminal_key' => "ID терминала",
+            'terminal_password' => "Пароль терминала",
             'is_receipt'   => "Отправлять данные для формирования чеков?",
         ]);
     }
@@ -71,6 +79,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
     {
         return ArrayHelper::merge(parent::attributeHints(), [
             'terminal_key' => "Указан в личном кабинете tinkiff",
+            'terminal_password' => "Указан в личном кабинете tinkiff",
             'is_receipt'   => "Необходимо передавать, если вы отправляете данные для формирования чеков по одному из сценариев: Платеж и чек одновременно или Сначала чек, потом платеж.",
         ]);
     }
@@ -87,6 +96,8 @@ class TinkoffPaysystemHandler extends PaysystemHandler
                 'name'   => 'Основные',
                 'fields' => [
                     'terminal_key',
+
+                    'terminal_password',
 
                     'is_receipt' => [
                         'class'     => BoolField::class,
@@ -217,6 +228,41 @@ class TinkoffPaysystemHandler extends PaysystemHandler
         if ($model->shopOrder && $model->shopOrder->contact_email) {
             $data["DATA"]["Email"] = $model->shopOrder->contact_email;
         }
+
+
+        /**
+         * @see https://www.tbank.ru/kassa/dev/payments/#section/Podpis-zaprosa
+         * 1) Собрать массив передаваемых данных в виде пар Ключ-Значения. В массив нужно добавить только параметры корневого объекта. Вложенные объекты и массивы не участвуют в расчете токена. В примере ниже в массив включены параметры TerminalKey, Amount, OrderId, Description и исключен объект Receipt и DATA.
+         */
+        $copyData = $data;
+        ArrayHelper::remove($copyData, 'DATA');
+        ArrayHelper::remove($copyData, 'Receipt');
+        /*ArrayHelper::remove($copyData, 'NotificationURL');
+        ArrayHelper::remove($copyData, 'SuccessURL');
+        ArrayHelper::remove($copyData, 'FailURL');*/
+
+        /**
+         * 2 Добавить в массив пару {Password, Значение пароля}. Пароль можно найти в личном кабинете Мерчанта
+         */
+        $copyData['Password'] = $this->terminal_password;
+
+        /**
+         * 3 Отсортировать массив по алфавиту по ключу.
+         */
+        ksort($copyData);
+        /**
+         * 4 Конкатенировать только значения пар в одну строку.
+         */
+        $tokenString = implode($copyData);
+        /**
+         * 5 Применить к строке хеш-функцию SHA-256 (с поддержкой UTF-8).
+         */
+        $token = hash('sha256', $tokenString);
+
+        /**
+         * 6 Добавить получившийся результат в значение параметра Token в тело запроса и отправить запрос.
+         */
+        $data['Token'] = $token;
 
 
         $client = new Client();
