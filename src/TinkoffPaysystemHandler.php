@@ -9,6 +9,7 @@
 namespace skeeks\cms\shop\tinkoff;
 
 use skeeks\cms\helpers\StringHelper;
+use skeeks\cms\shop\models\ShopBill;
 use skeeks\cms\shop\models\ShopOrder;
 use skeeks\cms\shop\models\ShopPayment;
 use skeeks\cms\shop\paysystem\PaysystemHandler;
@@ -16,7 +17,6 @@ use skeeks\yii2\form\fields\BoolField;
 use skeeks\yii2\form\fields\FieldSet;
 use yii\base\Exception;
 use yii\helpers\ArrayHelper;
-use yii\helpers\Json;
 use yii\helpers\Url;
 use yii\httpclient\Client;
 
@@ -69,18 +69,18 @@ class TinkoffPaysystemHandler extends PaysystemHandler
     public function attributeLabels()
     {
         return ArrayHelper::merge(parent::attributeLabels(), [
-            'terminal_key' => "ID терминала",
+            'terminal_key'      => "ID терминала",
             'terminal_password' => "Пароль терминала",
-            'is_receipt'   => "Отправлять данные для формирования чеков?",
+            'is_receipt'        => "Отправлять данные для формирования чеков?",
         ]);
     }
 
     public function attributeHints()
     {
         return ArrayHelper::merge(parent::attributeHints(), [
-            'terminal_key' => "Указан в личном кабинете tinkiff",
+            'terminal_key'      => "Указан в личном кабинете tinkiff",
             'terminal_password' => "Указан в личном кабинете tinkiff",
-            'is_receipt'   => "Необходимо передавать, если вы отправляете данные для формирования чеков по одному из сценариев: Платеж и чек одновременно или Сначала чек, потом платеж.",
+            'is_receipt'        => "Необходимо передавать, если вы отправляете данные для формирования чеков по одному из сценариев: Платеж и чек одновременно или Сначала чек, потом платеж.",
         ]);
     }
 
@@ -107,6 +107,106 @@ class TinkoffPaysystemHandler extends PaysystemHandler
             ],
 
         ];
+    }
+
+    public function actionPayBill(ShopBill $shopBill)
+    {
+        $model = $shopBill;
+
+        $yooKassa = $model->shopPaySystem->handler;
+        $money = $model->money->convertToCurrency("RUB");
+        $returnUrl = $shopBill->getUrl([], true);
+        $successUrl = $shopBill->getUrl(['success_paied' => true], true);
+        $failUrl = $shopBill->getUrl(['fail_paied' => true], true);
+
+        /**
+         * Для чеков нужно указывать информацию о товарах
+         * https://yookassa.ru/developers/api?lang=php#create_payment
+         */
+
+        $data = [
+            'TerminalKey'     => $this->terminal_key,
+            'Amount'          => $money->amount * 100,
+            'OrderId'         => $model->id,
+            'Description'     => $model->description,
+            'NotificationURL' => Url::to(['/tinkoff/tinkoff/notify'], true),
+            'SuccessURL'      => $successUrl,
+            'FailURL'         => $failUrl,
+        ];
+
+
+        $receipt = [];
+
+
+        $email = null;
+        $phone = null;
+        if ($model->shopOrder && $model->shopOrder->contact_email) {
+            $data["DATA"]["Email"] = $model->shopOrder->contact_email;
+        }
+
+
+        /**
+         * @see https://www.tbank.ru/kassa/dev/payments/#section/Podpis-zaprosa
+         * 1) Собрать массив передаваемых данных в виде пар Ключ-Значения. В массив нужно добавить только параметры корневого объекта. Вложенные объекты и массивы не участвуют в расчете токена. В примере ниже в массив включены параметры TerminalKey, Amount, OrderId, Description и исключен объект Receipt и DATA.
+         */
+        $copyData = $data;
+        ArrayHelper::remove($copyData, 'DATA');
+        ArrayHelper::remove($copyData, 'Receipt');
+        /*ArrayHelper::remove($copyData, 'NotificationURL');
+        ArrayHelper::remove($copyData, 'SuccessURL');
+        ArrayHelper::remove($copyData, 'FailURL');*/
+
+        /**
+         * 2 Добавить в массив пару {Password, Значение пароля}. Пароль можно найти в личном кабинете Мерчанта
+         */
+        $copyData['Password'] = $this->terminal_password;
+
+        /**
+         * 3 Отсортировать массив по алфавиту по ключу.
+         */
+        ksort($copyData);
+        /**
+         * 4 Конкатенировать только значения пар в одну строку.
+         */
+        $tokenString = implode($copyData);
+        /**
+         * 5 Применить к строке хеш-функцию SHA-256 (с поддержкой UTF-8).
+         */
+        $token = hash('sha256', $tokenString);
+
+        /**
+         * 6 Добавить получившийся результат в значение параметра Token в тело запроса и отправить запрос.
+         */
+        $data['Token'] = $token;
+
+
+        $client = new Client();
+        $request = $client
+            ->post($this->tinkoff_url."Init")
+            ->setFormat(Client::FORMAT_JSON)
+            ->setData($data);;
+
+        \Yii::info(print_r($data, true), self::class);
+
+        $response = $request->send();
+        if (!$response->isOk) {
+            \Yii::error($response->content, self::class);
+            throw new Exception('Tinkoff api not found');
+        }
+
+        if (!ArrayHelper::getValue($response->data, "PaymentId")) {
+            \Yii::error(print_r($response->data, true), self::class);
+            throw new Exception('Tinkoff kassa payment id not found: '.print_r($response->data, true));
+        }
+
+        $model->external_id = ArrayHelper::getValue($response->data, "PaymentId");
+        $model->external_data = $response->data;
+
+        if (!$model->save()) {
+            throw new Exception("Не удалось сохранить платеж: ".print_r($model->errors, true));
+        }
+
+        return \Yii::$app->response->redirect(ArrayHelper::getValue($response->data, "PaymentURL"));
     }
 
     /**
@@ -151,7 +251,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
             foreach ($shopOrder->shopOrderItems as $shopOrderItem) {
                 $itemData = [];
 
-                
+
                 /**
                  * @see https://www.tinkoff.ru/kassa/develop/api/payments/init-request/#Items
                  */
@@ -207,7 +307,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
                             $discountValue = $discountValue - $item['Amount'] - 1;
                         }
                     }
-                    
+
                     $item['Price'] = $item['Amount'];
 
                     $receipt['Items'][$key] = $item;
@@ -216,7 +316,6 @@ class TinkoffPaysystemHandler extends PaysystemHandler
 
 
             }
-
 
 
             $data["Receipt"] = $receipt;
@@ -269,8 +368,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
         $request = $client
             ->post($this->tinkoff_url."Init")
             ->setFormat(Client::FORMAT_JSON)
-            ->setData($data);
-        ;
+            ->setData($data);;
 
         \Yii::info(print_r($data, true), self::class);
 
@@ -282,7 +380,7 @@ class TinkoffPaysystemHandler extends PaysystemHandler
 
         if (!ArrayHelper::getValue($response->data, "PaymentId")) {
             \Yii::error(print_r($response->data, true), self::class);
-            throw new Exception('Tinkoff kassa payment id not found: ' . print_r($response->data, true));
+            throw new Exception('Tinkoff kassa payment id not found: '.print_r($response->data, true));
         }
 
         $model->external_id = ArrayHelper::getValue($response->data, "PaymentId");
